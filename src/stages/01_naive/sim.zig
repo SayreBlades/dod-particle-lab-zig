@@ -1,31 +1,136 @@
-// Stub Sim for C1. Real particle logic lands at C2.
+// Stage 1: the naive baseline (the strawman).
+//
+// One big AoS array of Particle. step() touches every field of every particle
+// every frame, including cold fields (mass/flags/seed/kind) that the update
+// doesn't use. Per-particle switch(kind) is a deliberate hot branch. respawn
+// is branchy in-place. This is the line every later stage must beat.
+//
+// Also the reference: bench mode (C3) generates the golden file from this stage.
+
 const std = @import("std");
 const fw = @import("../../framework/sim.zig");
+const config = @import("../../framework/config.zig");
+const rast = @import("../../framework/render.zig");
+
+const Particle = struct {
+    pos: fw.Vec3,
+    vel: fw.Vec3,
+    life: f32,
+    age: f32,
+    color: fw.Vec4,
+    size: f32,
+    rotation: f32,
+    mass: f32,
+    flags: u8,
+    kind: fw.ParticleKind,
+    seed: u32,
+};
 
 pub const Sim = struct {
+    alloc: std.mem.Allocator,
+    particles: []Particle,
+    rng: std.Random.DefaultPrng,
     n: usize,
 
     pub fn init(alloc: std.mem.Allocator, desc: fw.Desc) anyerror!*@This() {
-        _ = alloc;
-        const self = try std.heap.smp_allocator.create(@This());
-        self.* = .{ .n = desc.n };
+        const self = try alloc.create(@This());
+        const ps = try alloc.alloc(Particle, desc.n);
+        self.* = .{
+            .alloc = alloc,
+            .particles = ps,
+            .rng = std.Random.DefaultPrng.init(desc.seed),
+            .n = desc.n,
+        };
+        // Spawn all particles.
+        var i: usize = 0;
+        while (i < desc.n) : (i += 1) self.spawnParticle(i);
         return self;
     }
 
     pub fn step(self: *@This(), dt: f32) void {
-        _ = self;
-        _ = dt;
+        for (self.particles) |*p| {
+            // 1. Integrate: pos += vel * dt
+            p.pos = p.pos.add(p.vel.scale(dt));
+
+            // 2. Forces: vel += (gravity + drag*vel) * dt
+            //    (impulse was set at spawn; per-frame force is gravity + drag only)
+            const v = p.vel;
+            p.vel = .{
+                .x = v.x + (config.gravity.x + config.drag * v.x) * dt,
+                .y = v.y + (config.gravity.y + config.drag * v.y) * dt,
+                .z = v.z + (config.gravity.z + config.drag * v.z) * dt,
+            };
+
+            // 3. Age
+            p.age += dt;
+
+            // 4. Kill → respawn
+            if (p.age >= config.kill_age) {
+                self.spawnParticle(@intCast(p.seed % self.particles.len));
+            }
+
+            // Deliberate hot branch: per-particle dispatch (removed in stage 5).
+            _ = switch (p.kind) {
+                .smoke => smokeNudge(p),
+                .spark => sparkNudge(p),
+                .debris => debrisNudge(p),
+            };
+
+            // Cold fields touched every frame (the strawman's sin).
+            _ = p.mass;
+            _ = p.flags;
+            _ = p.seed;
+        }
     }
 
     pub fn render(self: *const @This(), fb: []u8, w: u32, h: u32) void {
-        _ = self;
-        _ = w;
-        _ = h;
-        // clear to black
-        @memset(fb, 0);
+        rast.clear(fb);
+        for (self.particles) |p| {
+            rast.splat(fb, w, h, p.pos.x, p.pos.y, p.color.x, p.color.y, p.color.z);
+        }
     }
 
     pub fn deinit(self: *@This()) void {
-        std.heap.smp_allocator.destroy(self);
+        self.alloc.free(self.particles);
+        self.alloc.destroy(self);
+    }
+
+    fn spawnParticle(self: *@This(), i: usize) void {
+        const r = self.rng.random();
+        const kind: fw.ParticleKind = @enumFromInt(r.intRangeAtMost(u8, 0, 2));
+        const imp = config.impulse[@intFromEnum(kind)];
+        const jitter_x = (r.float(f32) - 0.5) * 0.1;
+        const jitter_y = (r.float(f32) - 0.5) * 0.1;
+        const col = kindColor(kind);
+        self.particles[i] = .{
+            .pos = .{ .x = 0, .y = 0, .z = 0 },
+            .vel = .{
+                .x = imp.x + jitter_x,
+                .y = imp.y + jitter_y,
+                .z = imp.z,
+            },
+            .life = config.kill_age,
+            .age = r.float(f32) * config.kill_age, // staggered spawn ages
+            .color = col,
+            .size = 1.0,
+            .rotation = 0,
+            .mass = 1.0,
+            .flags = 0,
+            .kind = kind,
+            .seed = @intCast(i),
+        };
     }
 };
+
+fn kindColor(k: fw.ParticleKind) fw.Vec4 {
+    return switch (k) {
+        .smoke => .{ .x = 120, .y = 120, .z = 120, .w = 1 }, // gray
+        .spark => .{ .x = 255, .y = 180, .z = 60, .w = 1 }, // orange
+        .debris => .{ .x = 100, .y = 200, .z = 255, .w = 1 }, // blue
+    };
+}
+
+// Per-kind nudges (deliberate hot-loop dispatch — stage 5 removes this).
+fn smokeNudge(p: *Particle) void { _ = p; }
+fn sparkNudge(p: *Particle) void { _ = p; }
+fn debrisNudge(p: *Particle) void { _ = p; }

@@ -1,11 +1,13 @@
 // play driver: opens a raylib window and runs update+render in an infinite
 // loop. Never reports benchmark numbers (that's bench.zig's job).
+
 const std = @import("std");
 const rl = @import("raylib");
 const fw = @import("sim.zig");
 
 const W: c_int = 1024;
 const H: c_int = 1024;
+const DEFAULT_N: usize = 65_000; // enough to look dense, few enough to be fast
 
 pub fn run(comptime SimImpl: type, init: std.process.Init) !void {
     _ = init; // play mode does no I/O beyond raylib + stderr
@@ -18,34 +20,36 @@ pub fn run(comptime SimImpl: type, init: std.process.Init) !void {
     const stage_n = @import("options").stage;
     const stage_label = fw.stageName(stage_n);
 
-    var sim = try SimImpl.init(alloc, .{ .n = 0, .seed = 0 });
+    var sim = try SimImpl.init(alloc, .{ .n = DEFAULT_N, .seed = 0xC0FFEE });
     defer sim.deinit();
 
-    // RGBA framebuffer for the software rasterizer (stages 1-9 use render.zig;
-    // stage 10 overrides). For C1 the stub just clears to black.
+    // CPU RGBA framebuffer; Sim.render() writes here, we upload to GPU each frame.
     const fb = try alloc.alloc(u8, @intCast(W * H * 4));
     defer alloc.free(fb);
+
+    // Create an empty GPU texture sized to the framebuffer.
+    var img = rl.genImageColor(W, H, rl.black);
+    defer rl.unloadImage(img);
+    rl.imageFormat(&img, rl.PIXELFORMAT_UNCOMPRESSED_R8G8B8A8);
+    const tex = rl.loadTextureFromImage(img);
+    defer rl.unloadTexture(tex);
 
     var paused = false;
     var show_hud = true;
 
     while (!rl.windowShouldClose()) {
-        // input
         if (rl.isKeyPressed(rl.KEY_P)) paused = !paused;
         if (rl.isKeyPressed(rl.KEY_F1)) show_hud = !show_hud;
 
         const dt: f32 = if (paused) 0 else rl.getFrameTime();
         sim.step(dt);
         sim.render(fb, @intCast(W), @intCast(H));
+        rl.updateTexture(tex, @ptrCast(fb.ptr));
 
         rl.beginDrawing();
         defer rl.endDrawing();
         rl.clearBackground(rl.black);
-
-        // (In C1 render() just clears fb to black; nothing else to draw yet.
-        //  C2 will upload fb to a texture and DrawTexture it here.)
-        // Draw a black rect to indicate the framebuffer region.
-        // (placeholder until C2 wires up a GPU texture)
+        rl.drawTexture(tex, 0, 0, rl.white);
 
         if (show_hud) {
             rl.drawFPS(10, 10);

@@ -10,7 +10,7 @@ laid out memory for the loops instead of for the concept, the loops got 10× fas
 and the code got simpler. This lab walks through that transformation in stages;
 the math never changes between stages, only the data layout and access pattern do.
 
-**Status:** Stage 0 of 9 — last landed C1 (window opens with HUD)
+**Status:** Stage 1 of 9 — last landed C2 (particles render and move)
 
 ## Quick start
 
@@ -37,7 +37,7 @@ and executes; without it, `zig build` only builds to `zig-out/bin/`.
 | #  | Checkpoint                                  | Stage | Complete |
 |----|---------------------------------------------|-------|----------|
 | C1 | Window opens with HUD (raylib+build proven) | 0     | [x]      |
-| C2 | Particles render and move                   | 1     | [ ]      |
+| C2 | Particles render and move                   | 1     | [x]      |
 | C3 | Bench mode works + golden file generated    | 0,1   | [ ]      |
 | C4 | Stage 1 fully passes acceptance (baseline)  | 1     | [ ]      |
 | C5 | Stage 2 (hot/cold) — first measured DOD win | 2     | [ ]      |
