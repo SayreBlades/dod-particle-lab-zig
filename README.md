@@ -11,7 +11,7 @@ and the code got simpler. This lab walks through that transformation in 11
 measurable stages; the math never changes between stages, only the data layout
 and access pattern do.
 
-**Status:** Stage 0 of 9 — last landed _(none yet)_
+**Status:** Stage 0 of 9 — last landed C1
 
 ## Checkpoints
 
@@ -20,7 +20,7 @@ to the evidence report for each checkpoint.
 
 | #  | Checkpoint                                  | Stage | Complete |
 |----|---------------------------------------------|-------|----------|
-| C1 | Window opens with HUD (raylib+build proven) | 0     | [ ]()    |
+| C1 | Window opens with HUD (raylib+build proven) | 0     | [x](.scratch/plan/evidence/C1.md) |
 | C2 | Particles render and move                   | 1     | [ ]()    |
 | C3 | Bench mode works + golden file generated    | 0,1   | [ ]()    |
 | C4 | Stage 1 fully passes acceptance (baseline)  | 1     | [ ]()    |
