@@ -17,28 +17,33 @@ the math never changes between stages, only the data layout and access pattern d
 ```sh
 git submodule update --init --recursive
 
-# Interactive game (opens a 1024×1024 window)
-zig build -Dstage=1 -Dmode=play -Doptimize=ReleaseFast
+# Build + launch the interactive game (opens a 1024×1024 window)
+zig build run -Dstage=1 -Dmode=play -Doptimize=ReleaseFast
+
+# Or build only, then run manually:
+#   zig build -Dstage=1 -Dmode=play -Doptimize=ReleaseFast
+#   ./zig-out/bin/dod-particles
 
 # Headless benchmark + correctness check (no window) — lands at C3
-zig build -Dstage=1 -Dmode=bench -Doptimize=ReleaseFast
+#   zig build run -Dstage=1 -Dmode=bench -Doptimize=ReleaseFast
 ```
 
 `-Dstage` selects the data layout (1–11); `-Dmode` selects the driver
-(`play` = window, `bench` = numbers).
+(`play` = window, `bench` = numbers). `run` is a build step that builds
+and executes; without it, `zig build` only builds to `zig-out/bin/`.
 
 ## Checkpoints
 
 | #  | Checkpoint                                  | Stage | Complete |
-|----|--------------------------------------------|-------|----------|
+|----|---------------------------------------------|-------|----------|
 | C1 | Window opens with HUD (raylib+build proven) | 0     | [x]      |
 | C2 | Particles render and move                   | 1     | [ ]      |
 | C3 | Bench mode works + golden file generated    | 0,1   | [ ]      |
 | C4 | Stage 1 fully passes acceptance (baseline)  | 1     | [ ]      |
 | C5 | Stage 2 (hot/cold) — first measured DOD win | 2     | [ ]      |
 | C6 | Stage 3 (SoA) — flagship transformation     | 3     | [ ]      |
-| C7 | Stages 4–9 each pass acceptance              | 4–9   | [ ]      |
-| C8 | Synthesis verified, RESULTS recorded         | 9     | [ ]      |
+| C7 | Stages 4–9 each pass acceptance             | 4–9   | [ ]      |
+| C8 | Synthesis verified, RESULTS recorded        | 9     | [ ]      |
 | C9 | Bonus stages (rasterizer + video export)    | 10,11 | [ ]      |
 
 ## Hardware target
