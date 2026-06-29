@@ -95,6 +95,18 @@ pub const Sim = struct {
         self.alloc.destroy(self);
     }
 
+    /// Write n*6 floats (px,py,pz,vx,vy,vz) per particle for the golden check.
+    pub fn snapshot(self: *const @This(), out: []f32) void {
+        for (self.particles, 0..) |p, i| {
+            out[i * 6 + 0] = p.pos.x;
+            out[i * 6 + 1] = p.pos.y;
+            out[i * 6 + 2] = p.pos.z;
+            out[i * 6 + 3] = p.vel.x;
+            out[i * 6 + 4] = p.vel.y;
+            out[i * 6 + 5] = p.vel.z;
+        }
+    }
+
     fn spawnParticle(self: *@This(), i: usize) void {
         const r = self.rng.random();
         const kind: fw.ParticleKind = @enumFromInt(r.intRangeAtMost(u8, 0, 2));

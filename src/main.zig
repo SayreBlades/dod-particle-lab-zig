@@ -11,6 +11,6 @@ const SimImpl = switch (opts.stage) {
 pub fn main(init: std.process.Init) !void {
     return switch (opts.mode) {
         .play => @import("framework/play.zig").run(SimImpl, init),
-        .bench => @compileError("bench mode not yet implemented (lands at C3)"),
+        .bench => @import("framework/bench.zig").run(SimImpl, init),
     };
 }
