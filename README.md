@@ -10,7 +10,7 @@ laid out memory for the loops instead of for the concept, the loops got 10× fas
 and the code got simpler. This lab walks through that transformation in stages;
 the math never changes between stages, only the data layout and access pattern do.
 
-**Status:** Stage 1 of 9 — last landed C3 (bench mode + golden file)
+**Status:** Stage 1 of 9 — last landed C4 (baseline locked, reference for all later stages)
 
 ## Quick start
 
@@ -121,7 +121,7 @@ if correctness passes.
 | C1 | Window opens with HUD (raylib+build proven) | 0     | [x]      |
 | C2 | Particles render and move                   | 1     | [x]      |
 | C3 | Bench mode works + golden file generated    | 0,1   | [x]      |
-| C4 | Stage 1 fully passes acceptance (baseline)  | 1     | [ ]      |
+| C4 | Stage 1 fully passes acceptance (baseline)  | 1     | [x]      |
 | C5 | Stage 2 (hot/cold) — first measured DOD win | 2     | [ ]      |
 | C6 | Stage 3 (SoA) — flagship transformation     | 3     | [ ]      |
 | C7 | Stages 4–9 each pass acceptance             | 4–9   | [ ]      |
