@@ -99,20 +99,22 @@ so it works whether or not a terminal is attached. The golden file
 ### Reading the numbers
 
 The whole project's payoff is watching `ns/particle` drop across stages.
-Example (stage 1 baseline on M4):
+Example (stage 1 baseline on M4, with working-set `mem` column):
 
 ```
-           N |       ns/frame |    ns/particle |   frames/sec
-        4000 |        11556.5 |          2.889 |      86531.7
-      262000 |       338530.8 |          1.292 |       2953.9
-     4000000 |      6477430.4 |          1.619 |        154.4
+           N |     mem(MB) |    ns/particle |   frames/sec
+        4000 |         0.3 |          3.104 |      80540.9
+      262000 |        17.0 |          1.326 |       2878.2
+     4000000 |       259.4 |          1.684 |        148.4
+    64000000 |      4150.4 |          1.719 |          9.1
 ```
 
-The curve dips (cache amortization) then rises (L2 spill). Stage 2 (hot/cold)
-should nudge the whole curve down; stage 3 (SoA) drops it further; stage 9
-(synthesis) should be ~8–15× lower than stage 1 at N=1M. If a stage's numbers
-don't beat the prior stage's at large N, the implementation is wrong even
-if correctness passes.
+Read the curve shape: dips to a minimum at 262K (SLC-resident), slopes up
+to 1M (L2→SLC), then plateaus from 4M→64M (memory-bandwidth-bound — the
+working set grows 64× while ns/particle barely moves). The `mem` column
+makes the bandwidth plateau obvious: ~80 B/particle × N. Stage 2 (hot/cold)
+shrinks bytes/particle → lifts the whole plateau down. Stage 3 (SoA)
+shrinks further. Stage 9 (synthesis) should be ~8–15× lower at N=1M.
 
 ## Checkpoints
 
@@ -147,17 +149,59 @@ cpu    : Apple M4
 cores  : physical=10 logical=10
 
 hw.cachelinesize   = 128         ← stage 7 alignment/tile target
-hw.l1dcachesize    = 65536       (64 KB)
-hw.l1icachesize    = 131072      (128 KB)
-hw.l2cachesize     = 4194304     (4 MB)   ← benchmark sweep kink lives here
+hw.l1dcachesize    = 65536       (64 KB, per core, split from L1i)
+hw.l1icachesize    = 131072      (128 KB, per core)
+hw.l2cachesize     = 4194304     (4 MB, per cluster, UNIFIED: code+data share)
+hw.l3cachesize     = 0           (sysctl quirk; M4 has an SLC, see below)
 hw.pagesize        = 16384       (16 KB)
 hw.memsize         = 17179869184  (16 GB)
 SIMD               = NEON (128-bit → @Vector(4, f32) native; @Vector(8) = 2 ops)
 ```
 
-The benchmark N-sweep `{4K, 16K, 65K, 262K, 1M, 4M}` is chosen so the L2
-boundary (~524K hot particles at 8 B/hot-field) falls between 262K and 1M —
-i.e. the cache spill shows up as a visible kink in the curve.
+**On the M4 cache hierarchy and what the benchmark actually sees.** L1 is
+split (i/d separate); L2 is *unified* (code + data share 4 MB). `sysctl`
+reports `hw.l3cachesize = 0`, but the M4 has a System Level Cache (SLC) below
+L2 and above RAM — its size isn't publicly specified by Apple (likely
+~16–24 MB). Apple doesn't expose userspace PMU access, so we can't read
+clean per-level refill counters; instead we **infer the hierarchy from kinks
+in the N-sweep curve** (the DOD way: measure behavior, don't trust specs).
+
+The stage-1 extended sweep `{4K … 64M}` reveals the shape:
+
+```
+       N |     mem(MB) | ns/particle | what's happening
+   4K   | 0.3         | 3.10        | L1/L2 resident
+  16K   | 1.0         | 2.66        | L2 resident
+  65K   | 4.2         | 1.62        | past L2, into SLC
+ 262K   | 17.0        | 1.33        | SLC resident (first minimum)
+   1M   | 64.8        | 1.52        | L2→SLC slope
+   4M   | 259.4       | 1.68        | bandwidth plateau
+  16M   | 1037.6      | 1.71        | bandwidth plateau
+  64M   | 4150.4      | 1.72        | bandwidth plateau (RAM)
+```
+
+Three honest takeaways, which correct an earlier "L2 spill cliff" framing:
+1. There is **no cliff** — the L2→SLC transition (262K→1M) is a *gentle slope*
+   (+17%), because SLC latency is only ~2–3× L2. The curve dips to a minimum
+   at 262K (SLC-resident) then slopes up.
+2. From ~1M onward, ns/particle is **flat across a 64× working-set increase**
+   (1.52 → 1.72). That plateau is the signature of **memory-bandwidth
+   saturation**, not cache-miss latency. Stage 1 streams ~80 B/particle; at
+   4M that's ~190 GB/s of effective throughput, ~the M4's DRAM ceiling.
+3. **The SLC is not visible as a discrete kink** for this streaming access
+   pattern — only as the flat region between the L2 slope and the RAM plateau.
+   A second kink (SLC→RAM) doesn't appear; the M4's SLC handles streaming
+   reads well enough that bandwidth saturates before capacity does.
+
+**What this means for the DOD story.** Stage 1 is **memory-bandwidth-bound**
+from ~1M particles. The cache lessons (L1→L2→SLC residency) are most visible
+at small N (4K–262K); the big-N region is a *bandwidth* lesson. This
+reframes what stages 2–3 target: reducing bytes-per-particle (AoS→SoA,
+hot/cold split) directly lifts off the bandwidth floor. At large N, stage 3
+(24 B/particle vs stage 1's 80 B) should see ~3× better ns/particle —
+*because it streams fewer bytes*, not because it hits cache more. And stage 6
+(SIMD) will help at small N (cache-resident) but be ~flat at large N
+(bandwidth-bound) — a bandwidth roofline in miniature.
 
 ## Layout
 

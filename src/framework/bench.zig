@@ -8,7 +8,7 @@ const config = @import("config.zig");
 const hardware = @import("hardware.zig");
 const correctness = @import("correctness.zig");
 
-const SWEEP = [_]usize{ 4_000, 16_000, 65_000, 262_000, 1_000_000, 4_000_000 };
+const SWEEP = [_]usize{ 4_000, 16_000, 65_000, 262_000, 1_000_000, 4_000_000, 16_000_000, 64_000_000 };
 const ITERS: usize = 200;
 const GOLDEN_STEPS: usize = 600;
 const GOLDEN_N: usize = 1024;
@@ -52,8 +52,8 @@ pub fn run(comptime SimImpl: type, init: std.process.Init) !void {
 
     // --- benchmark sweep ---
     std.debug.print("=== Benchmark (iters={d} per N) ===\n", .{ITERS});
-    std.debug.print("  {s:>10} | {s:>14} | {s:>14} | {s:>12}\n", .{ "N", "ns/frame", "ns/particle", "frames/sec" });
-    std.debug.print("  {s:-<10}-+-{s:-<14}-+-{s:-<14}-+-{s:-<12}\n", .{ "", "", "", "" });
+    std.debug.print("  {s:>10} | {s:>11} | {s:>14} | {s:>14} | {s:>12}\n", .{ "N", "mem(MB)", "ns/frame", "ns/particle", "frames/sec" });
+    std.debug.print("  {s:-<10}-+-{s:-<11}-+-{s:-<14}-+-{s:-<14}-+-{s:-<12}\n", .{ "", "", "", "", "" });
 
     for (SWEEP) |n| {
         var sim = SimImpl.init(alloc, .{ .n = n, .seed = config.spawn_seed }) catch |e| {
@@ -61,6 +61,11 @@ pub fn run(comptime SimImpl: type, init: std.process.Init) !void {
             continue;
         };
         defer sim.deinit();
+
+        // working set = N * bytes-per-particle (the sim reports its own)
+        const bytes_per_p = sim.bytesPerParticle();
+        const working_set_bytes: u64 = @as(u64, n) * bytes_per_p;
+        const working_set_mb: f64 = @as(f64, @floatFromInt(working_set_bytes)) / (1024.0 * 1024.0);
 
         // warmup
         var w: usize = 0;
@@ -74,8 +79,8 @@ pub fn run(comptime SimImpl: type, init: std.process.Init) !void {
         const ns_per_frame = ns / @as(f64, @floatFromInt(ITERS));
         const ns_per_particle = ns_per_frame / @as(f64, @floatFromInt(n));
         const frames_sec = 1e9 / ns_per_frame;
-        std.debug.print("  {d:>10} | {d:>14.1} | {d:>14.3} | {d:>12.1}\n", .{
-            n, ns_per_frame, ns_per_particle, frames_sec,
+        std.debug.print("  {d:>10} | {d:>11.1} | {d:>14.1} | {d:>14.3} | {d:>12.1}\n", .{
+            n, working_set_mb, ns_per_frame, ns_per_particle, frames_sec,
         });
     }
 }

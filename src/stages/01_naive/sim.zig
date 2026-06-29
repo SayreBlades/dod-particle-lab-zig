@@ -107,6 +107,14 @@ pub const Sim = struct {
         }
     }
 
+    /// Bytes per particle that step() touches each frame (the working-set cost).
+    /// Used by the bench driver to compute the mem(MB) column. Stage 1 walks the
+    /// full AoS Particle struct (the strawman's sin: cold fields dragged too).
+    pub fn bytesPerParticle(self: *const @This()) usize {
+        _ = self;
+        return @sizeOf(Particle);
+    }
+
     fn spawnParticle(self: *@This(), i: usize) void {
         const r = self.rng.random();
         const kind: fw.ParticleKind = @enumFromInt(r.intRangeAtMost(u8, 0, 2));
