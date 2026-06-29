@@ -16,21 +16,103 @@ the math never changes between stages, only the data layout and access pattern d
 
 ```sh
 git submodule update --init --recursive
-
-# Build + launch the interactive game (opens a 1024×1024 window)
-zig build run -Dstage=1 -Dmode=play -Doptimize=ReleaseFast
-
-# Or build only, then run manually:
-#   zig build -Dstage=1 -Dmode=play -Doptimize=ReleaseFast
-#   ./zig-out/bin/dod-particles
-
-# Headless benchmark + correctness check (no window) — lands at C3
-#   zig build run -Dstage=1 -Dmode=bench -Doptimize=ReleaseFast
 ```
 
-`-Dstage` selects the data layout (1–11); `-Dmode` selects the driver
-(`play` = window, `bench` = numbers). `run` is a build step that builds
-and executes; without it, `zig build` only builds to `zig-out/bin/`.
+There are two modes. **play** opens a window and runs the simulation
+visually; **bench** runs headless and prints numbers + a correctness check.
+Always build with `-Doptimize=ReleaseFast` for real numbers — Debug builds
+make every stage look equally slow and hide the cache effects we're here
+to see.
+
+### Play mode (interactive window)
+
+```sh
+zig build run -Dstage=1 -Dmode=play -Doptimize=ReleaseFast
+```
+
+Opens a 1024×1024 raylib window. You should see particles rendering and
+moving (three colored streams from the center: gray smoke, orange sparks,
+blue debris, arcing under gravity). HUD top-left shows FPS, stage name, and
+N. Keys: `ESC` quit · `P` pause · `F1` toggle HUD.
+
+### Bench mode (headless numbers + correctness)
+
+```sh
+zig build -Dstage=1 -Dmode=bench -Doptimize=ReleaseFast
+./zig-out/bin/dod-particles
+```
+
+(Bench mode reads from stdin/stderr, so build and run are separate steps.)
+Prints: the hardware profile, a correctness check vs the golden file, and
+the N-sweep table. Stage 1 also generates the golden file.
+
+`-Dstage` selects the data layout (1–11); `-Dmode` selects the driver.
+`zig build run` builds + executes; `zig build` alone only builds to
+`zig-out/bin/`.
+
+## How to verify a checkpoint
+
+Each checkpoint has a **criterion** (what must be true) and a **command**
+(what you run to see it). Run both modes for any stage you're verifying.
+
+### Verify play mode
+
+```sh
+zig build run -Dstage=N -Dmode=play -Doptimize=ReleaseFast
+```
+
+**What you're checking:**
+- A window opens and the sim runs for ≥60s without crashing.
+- Particles render and move (the visual should look the same across all
+  stages — the *math* never changes, only the *layout* does).
+- The HUD shows the correct stage name and particle count.
+
+If the visual changes between stages (different trajectories, colors,
+counts), something is wrong — the layout transformation broke the math.
+
+### Verify bench mode
+
+```sh
+zig build -Dstage=N -Dmode=bench -Doptimize=ReleaseFast
+./zig-out/bin/dod-particles
+```
+
+**What you're checking, top to bottom of the output:**
+1. **Hardware block** — prints cache facts (line size, L1/L2 sizes, etc.).
+   Should match `scripts/hardware_profile.sh` on the same machine.
+2. **Correctness: PASS** — the stage's output matches `golden/stage1.bin`
+   within `eps=1e-4`. This is the proof the DOD transformation didn't change
+   the math. If you see `FAIL`, the stage has a bug — it diverged from
+   stage 1's reference. (Stage 1 self-checks after generating the golden file.)
+3. **Benchmark table** — the N-sweep. Read `ns/particle` across N:
+   - It should generally *decrease* as N grows (fixed costs amortize).
+   - It *increases* at the L2 spill point (1M→4M on M4) — that's expected.
+   - **Between stages**, later stages should have lower `ns/particle` than
+     earlier ones at large N. If stage 3 isn't faster than stage 2 at N≥1M,
+     the transformation didn't land.
+
+**Reproducibility note:** bench output goes to stderr via `std.debug.print`,
+so it works whether or not a terminal is attached. The golden file
+(`golden/stage1.bin`) is gitignored — it regenerates from stage 1 on any
+`-Dstage=1 -Dmode=bench` run.
+
+### Reading the numbers
+
+The whole project's payoff is watching `ns/particle` drop across stages.
+Example (stage 1 baseline on M4):
+
+```
+           N |       ns/frame |    ns/particle |   frames/sec
+        4000 |        11556.5 |          2.889 |      86531.7
+      262000 |       338530.8 |          1.292 |       2953.9
+     4000000 |      6477430.4 |          1.619 |        154.4
+```
+
+The curve dips (cache amortization) then rises (L2 spill). Stage 2 (hot/cold)
+should nudge the whole curve down; stage 3 (SoA) drops it further; stage 9
+(synthesis) should be ~8–15× lower than stage 1 at N=1M. If a stage's numbers
+don't beat the prior stage's at large N, the implementation is wrong even
+if correctness passes.
 
 ## Checkpoints
 
