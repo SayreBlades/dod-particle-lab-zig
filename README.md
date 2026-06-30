@@ -46,6 +46,24 @@ zig build -Dstage=1 -Dmode=bench -Doptimize=ReleaseFast
 Prints: the hardware profile, a correctness check vs the golden file, and
 the N-sweep table. Stage 1 also generates the golden file.
 
+### Audit mode (data-density, the Acton zip-test)
+
+```sh
+zig build -Dstage=1 -Dmode=audit -Doptimize=ReleaseFast
+./zig-out/bin/dod-particles
+```
+
+Pipes each field's raw bytes through `gzip -c` and tabulates the compression
+ratio. gzip is an entropy oracle — the ratio is a lower bound on a field's
+information density. Low density = redundant per-particle (constant / few
+distinct values) = candidate to drop from the hot loop. This is Mike Acton's
+"print it, zip it" trick from ~49:38 of the talk, applied per-field. The
+headline number is the size-weighted **MEAN density of the fields the hot
+loop touches** — stages 2–9 should drive it UP as cold/constant fields leave
+the hot loop, the qualitative twin of `ns/particle` falling. Runs against the
+same fixed seed + steps as the golden check. See
+`.scratch/plan/RESULTS.md` for the per-stage density rollup.
+
 `-Dstage` selects the data layout (1–11); `-Dmode` selects the driver.
 `zig build run` builds + executes; `zig build` alone only builds to
 `zig-out/bin/`.

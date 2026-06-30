@@ -21,6 +21,23 @@ pub const Desc = struct {
     // stage's math is provably identical. Desc only describes population/seed.
 };
 
+/// One field's raw bytes across the whole particle array, for the data-density
+/// audit (Acton's zip-test, §data-audit). `bytes` is the contiguous memory
+/// of this field over all N particles in storage order — so the gzip ratio
+/// is a lower-bound estimate of the field's information density.
+/// - Low density  → field is redundant per-particle (constant / few distinct
+///   values). Candidate to drop from the hot loop or stop storing per-element.
+/// - High density → field carries real signal. Leave it alone.
+///
+/// The set of names + how bytes are sliced IS a fingerprint of the stage's
+/// layout: stage 1 emits AoS-strided blobs; stage 3 emits per-component SoA
+/// streams. Watching mean density rise across stages is the qualitative twin
+/// of watching ns/particle fall.
+pub const FieldDump = struct {
+    name: []const u8,
+    bytes: []u8,
+};
+
 /// Each stage's Sim must expose:
 ///   pub const Sim = struct {
 ///       <stage-specific fields — the layout IS the lesson>
@@ -28,7 +45,15 @@ pub const Desc = struct {
 ///       pub fn step(self: *@This(), dt: f32) void;
 ///       pub fn render(self: *const @This(), fb: []u8, w: u32, h: u32) void;
 ///       pub fn deinit(self: *@This()) void;
+///       pub fn snapshot(self: *const @This(), out: []f32) void;  // n*6 floats (px,py,pz,vx,vy,vz)
+///       pub fn bytesPerParticle(self: *const @This()) usize;
+///       pub fn dumpFields(self: *const @This(), alloc: std.mem.Allocator)
+///           ![]FieldDump;  // raw bytes per field, for the density audit
 ///   };
+///
+/// `dumpFields` is layout-aware: stage 1 strides an AoS array; stage 3 emits
+/// per-component SoA streams. The audit output therefore reflects the layout
+/// transformation itself.
 ///
 /// `name` is a short stage label for the HUD.
 pub fn stageName(comptime n: u32) []const u8 {

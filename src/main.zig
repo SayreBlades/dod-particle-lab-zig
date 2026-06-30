@@ -12,5 +12,6 @@ pub fn main(init: std.process.Init) !void {
     return switch (opts.mode) {
         .play => @import("framework/play.zig").run(SimImpl, init),
         .bench => @import("framework/bench.zig").run(SimImpl, init),
+        .audit => @import("framework/audit.zig").run(SimImpl, init),
     };
 }

@@ -14,7 +14,8 @@ pub fn build(b: *std.Build) void {
     const mode: Mode = blk: {
         if (std.mem.eql(u8, mode_str, "play")) break :blk .play;
         if (std.mem.eql(u8, mode_str, "bench")) break :blk .bench;
-        std.debug.panic("invalid -Dmode='{s}' (play|bench)", .{mode_str});
+        if (std.mem.eql(u8, mode_str, "audit")) break :blk .audit;
+        std.debug.panic("invalid -Dmode='{s}' (play|bench|audit)", .{mode_str});
     };
     const mode_enum: Mode = mode;
 
@@ -54,7 +55,7 @@ pub fn build(b: *std.Build) void {
     run_step.dependOn(&run.step);
 }
 
-pub const Mode = enum { play, bench };
+pub const Mode = enum { play, bench, audit };
 
 fn addRaylib(
     b: *std.Build,

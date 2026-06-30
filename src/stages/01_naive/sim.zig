@@ -115,6 +115,30 @@ pub const Sim = struct {
         return @sizeOf(Particle);
     }
 
+    /// Dump each field's raw bytes across the particle array (AoS-strided) for
+    /// the data-density audit. The hot loop in stage 1 touches *every* field of
+    /// *every* particle (the strawman's sin), so every blob below is paid for
+    /// in cache bandwidth every frame — the audit shows how little of it carries
+    /// information. (Stage 2 will stop walking the cold ones; stage 3 will turn
+    /// these AoS blobs into per-component SoA streams; stage 4 will drop the
+    /// constants entirely.)
+    pub fn dumpFields(self: *const @This(), alloc: std.mem.Allocator) ![]fw.FieldDump {
+        const ps = self.particles;
+        const out = try alloc.alloc(fw.FieldDump, 11);
+        out[0] = .{ .name = "pos", .bytes = try extractField("pos", ps, alloc) };
+        out[1] = .{ .name = "vel", .bytes = try extractField("vel", ps, alloc) };
+        out[2] = .{ .name = "life", .bytes = try extractField("life", ps, alloc) };
+        out[3] = .{ .name = "age", .bytes = try extractField("age", ps, alloc) };
+        out[4] = .{ .name = "color", .bytes = try extractField("color", ps, alloc) };
+        out[5] = .{ .name = "size", .bytes = try extractField("size", ps, alloc) };
+        out[6] = .{ .name = "rotation", .bytes = try extractField("rotation", ps, alloc) };
+        out[7] = .{ .name = "mass", .bytes = try extractField("mass", ps, alloc) };
+        out[8] = .{ .name = "flags", .bytes = try extractField("flags", ps, alloc) };
+        out[9] = .{ .name = "kind", .bytes = try extractField("kind", ps, alloc) };
+        out[10] = .{ .name = "seed", .bytes = try extractField("seed", ps, alloc) };
+        return out;
+    }
+
     fn spawnParticle(self: *@This(), i: usize) void {
         const r = self.rng.random();
         const kind: fw.ParticleKind = @enumFromInt(r.intRangeAtMost(u8, 0, 2));
@@ -154,3 +178,16 @@ fn kindColor(k: fw.ParticleKind) fw.Vec4 {
 fn smokeNudge(p: *Particle) void { _ = p; }
 fn sparkNudge(p: *Particle) void { _ = p; }
 fn debrisNudge(p: *Particle) void { _ = p; }
+
+/// Extract one field's bytes from the AoS array (AoS-strided: the natural
+/// memory layout of that field as the hot loop reads it).
+fn extractField(comptime field: []const u8, ps: []const Particle, alloc: std.mem.Allocator) ![]u8 {
+    const FT = @TypeOf(@field(ps[0], field));
+    const sz = @sizeOf(FT);
+    const out = try alloc.alloc(u8, ps.len * sz);
+    for (ps, 0..) |_, i| {
+        const ptr = &@field(ps[i], field);
+        @memcpy(out[i * sz ..][0..sz], std.mem.asBytes(ptr));
+    }
+    return out;
+}
