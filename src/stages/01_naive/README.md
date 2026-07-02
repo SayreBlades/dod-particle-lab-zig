@@ -31,8 +31,8 @@ var particles: []Particle;  // one AoS array
 // step: for (particles) |*p| { integrate; forces; age; if(kill) respawn; switch(kind){...} }
 ```
 
-`sizeof(Particle)` ≈ 80 B (with padding). The math *needs* ~28 B/frame
-(`pos`/`vel`/`age`); the loop *walks* ~80 B. That gap is the seed of the whole
+`sizeof(Particle)` = 68 B (with padding). The math *needs* ~28 B/frame
+(`pos`/`vel`/`age`); the loop *walks* ~68 B. That gap is the seed of the whole
 lesson.
 
 ---
@@ -66,9 +66,10 @@ shape is the durable signal, not any single number.)*
 - **262K→1M:** gentle slope up (+9%). The L2→SLC transition — *not* a cliff,
   because SLC latency is only ~2–3× L2.
 - **1M→64M:** **flat across a 64× working-set increase** (1.47 → 1.90). That
-  plateau is the signature of **memory-bandwidth saturation**, not cache-miss
-  latency. Stage 1 streams ~80 B/particle; at 4M that's ~190 GB/s effective
-  throughput, ≈ the M4's DRAM ceiling.
+  plateau is the signature of **memory-throughput saturation**, not cache-miss
+  latency: ns/particle stops tracking cache *latency* and starts tracking
+  *bytes ÷ streaming throughput*. Stage 1 streams 68 B/particle, so its large-N
+  floor sits higher than a leaner layout's would — exactly what stage 2 tests.
 
 **The honest takeaway:** stage 1 is **memory-bandwidth-bound from ~1M particles.**
 The cache lessons (L1→L2→SLC residency) are most visible at small N; the big-N
@@ -119,7 +120,7 @@ a field's information density.
   loop pays ~64 KB of cache bandwidth per 1K particles to read constants and a
   3-entry color table.
 - Only **`pos`, `vel`, `age`** are real signal (0.73–0.88 density). The math
-  *needs* ~28 B/particle; the loop *walks* ~80 B — the audit quantifies the
+  *needs* ~28 B/particle; the loop *walks* ~68 B — the audit quantifies the
   waste the whole stage-2 transformation targets, by measuring the bytes rather
   than reasoning about usage cadence.
 
