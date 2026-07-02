@@ -114,6 +114,28 @@ so it works whether or not a terminal is attached. The golden file
 (`golden/stage1.bin`) is gitignored — it regenerates from stage 1 on any
 `-Dstage=1 -Dmode=bench` run.
 
+### Verify audit mode (data-density)
+
+```sh
+zig build -Dstage=N -Dmode=audit -Doptimize=ReleaseFast
+./zig-out/bin/dod-particles
+```
+
+**What you're checking:**
+1. **Hardware block** — same as bench (the ritual anchor).
+2. **Per-field density table** — `density = gz_bytes / raw_bytes` per field.
+   Low density = redundant per-particle (constant / few distinct values) =
+   candidate to drop from the hot loop. High density = real signal.
+3. **MEAN density** — the headline number, size-weighted over the dumped
+   fields. It should **rise** across stages as cold/constant fields leave the
+   hot loop — the qualitative twin of `ns/particle` falling. Stage 1 ≈ 0.36;
+   later stages should climb toward ~0.9.
+
+The audit links no raylib and never touches the hot path — it's *context*, not
+an acceptance gate. The per-field interpretation and what each stage's density
+should look like is in `src/stages/NN_name/README.md` (§3) and the cross-stage
+rollup in `.scratch/plan/RESULTS.md`.
+
 ### Reading the numbers
 
 The whole project's payoff is watching `ns/particle` drop across stages.
