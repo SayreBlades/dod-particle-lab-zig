@@ -229,7 +229,8 @@ src/                          # the project
 ├── main.zig                  # comptime switch: stage -> SimImpl, mode -> driver
 ├── framework/                # shared across every stage
 ├── bindings/                 # minimal hand-written extern "c" (raylib)
-└── stages/NN_name/sim.zig     # the ONLY file that changes between stages 1-9
+├── stages/NN_name/sim.zig     # the ONLY file that changes between stages 1-9
+│   └── README.md             # per-stage: lesson + bench + density audit
 vendor/                       # git submodules: raylib (6.0), stb (PNG write)
 scripts/hardware_profile.sh   # regenerate the hardware profile above
 ```
