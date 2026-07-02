@@ -5,6 +5,7 @@ const fw = @import("framework/sim.zig");
 
 const SimImpl = switch (opts.stage) {
     1 => @import("stages/01_naive/sim.zig").Sim,
+    2 => @import("stages/02_hotcold/sim.zig").Sim,
     else => @compileError("stage not yet implemented"),
 };
 
