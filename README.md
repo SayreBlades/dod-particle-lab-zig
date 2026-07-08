@@ -10,7 +10,7 @@ laid out memory for the loops instead of for the concept, the loops got 10× fas
 and the code got simpler. This lab walks through that transformation in stages;
 the math never changes between stages, only the data layout and access pattern do.
 
-**Status:** Stage 2 of 9 — last landed C5 (first measured DOD win: hot/cold split, 1.1×–1.5× faster at N≥65K)
+**Status:** Stage 3 of 9 — last landed C6 (flagship *layout* move: AoS→SoA. The layout lands — audit density 0.655→0.722, `life` leaves the hot loop — but on Zig 0.17-dev, which doesn't autovectorize, scalar-SoA is ~1.5× slower than stage 2: the layout's overhead is uncompensated without the SIMD reward, which is stage 6's job per P7. The time win is deferred, not lost.)
 
 ## Quick start
 
@@ -165,7 +165,7 @@ shrinks further. Stage 9 (synthesis) should be ~8–15× lower at N=1M.
 | C3 | Bench mode works + golden file generated    | 0,1   | [x]      |
 | C4 | Stage 1 fully passes acceptance (baseline)  | 1     | [x]      |
 | C5 | Stage 2 (hot/cold) — first measured DOD win | 2     | [x]      |
-| C6 | Stage 3 (SoA) — flagship transformation     | 3     | [ ]      |
+| C6 | Stage 3 (SoA) — flagship layout transformation     | 3     | [x]      |
 | C7 | Stages 4–9 each pass acceptance             | 4–9   | [ ]      |
 | C8 | Synthesis verified, RESULTS recorded        | 9     | [ ]      |
 | C9 | Bonus stages (rasterizer + video export)    | 10,11 | [ ]      |
