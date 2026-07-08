@@ -98,11 +98,11 @@ pub fn run(comptime SimImpl: type, init: std.process.Init) !void {
         "MEAN*", total_raw, total_gz, mean_density, mean_bits,
     });
     std.debug.print("\n  * MEAN = size-weighted over all dumped fields.\n", .{});
-    std.debug.print("    Stage 1 touches every field in step() (strawman), so this\n", .{});
-    std.debug.print("    is the density of the bytes actually dragged through L1.\n", .{});
-    std.debug.print("    Stages 2-9 should drive MEAN density UP (cold/constant\n", .{});
-    std.debug.print("    fields leave the hot loop) — the qualitative twin of\n", .{});
-    std.debug.print("    ns/particle falling.\n", .{});
+    std.debug.print("    dumpFields reports only the fields step() actually touches (the\n", .{});
+    std.debug.print("    hot-loop footprint); cold/constant fields leave the dump as they\n", .{});
+    std.debug.print("    leave the hot loop. Stages 2-9 should drive MEAN density UP\n", .{});
+    std.debug.print("    (reclaimed entropy ≈ reclaimed bandwidth) — the qualitative twin\n", .{});
+    std.debug.print("    of ns/particle falling.\n", .{});
 }
 
 /// Pipe `bytes` through `gzip -c` and return the compressed length.
