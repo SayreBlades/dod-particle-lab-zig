@@ -222,17 +222,17 @@ trade). The lab's whole story is a measured walk through that trade.
 ## Checkpoints
 
 
-| #  | Checkpoint                                  | Stage | Complete |
-|----|---------------------------------------------|-------|----------|
-| C1 | Window opens with HUD (raylib+build proven) | 0     | [x]      |
-| C2 | Particles render and move                   | 1     | [x]      |
-| C3 | Bench mode works + golden file generated    | 0,1   | [x]      |
-| C4 | Stage 1 fully passes acceptance (baseline)  | 1     | [x]      |
-| C5 | Stage 2 (hot/cold) — first measured DOD win | 2     | [x]      |
-| C6 | Stage 3 (SoA) — flagship layout transformation     | 3     | [x]      |
-| C7 | Stages 4–9 each pass acceptance             | 4–9   | [ ]      |
-| C8 | Synthesis verified, RESULTS recorded        | 9     | [ ]      |
-| C9 | Bonus stages (rasterizer + video export)    | 10,11 | [ ]      |
+| #  | Checkpoint                                     | Stage | Complete |
+|----|------------------------------------------------|-------|----------|
+| C1 | Window opens with HUD (raylib+build proven)    | 0     | [x]      |
+| C2 | Particles render and move                      | 1     | [x]      |
+| C3 | Bench mode works + golden file generated       | 0,1   | [x]      |
+| C4 | Stage 1 fully passes acceptance (baseline)     | 1     | [x]      |
+| C5 | Stage 2 (hot/cold) — first measured DOD win    | 2     | [x]      |
+| C6 | Stage 3 (SoA) — flagship layout transformation | 3     | [x]      |
+| C7 | Stages 4–9 each pass acceptance                | 4–9   | [ ]      |
+| C8 | Synthesis verified, RESULTS recorded           | 9     | [ ]      |
+| C9 | Bonus stages (rasterizer + video export)       | 10,11 | [ ]      |
 
 ## Hardware target
 
@@ -273,7 +273,7 @@ in the N-sweep curve** (the DOD way: measure behavior, don't trust specs).
 The stage-1 extended sweep `{4K … 64M}` reveals the shape:
 
 ```
-       N |     mem(MB) | ns/particle | what's happening
+      N |     mem(MB) | ns/particle | what's happening
    4K   | 0.3         | 3.10        | L1/L2 resident
   16K   | 1.0         | 2.66        | L2 resident
   65K   | 4.2         | 1.62        | past L2, into SLC

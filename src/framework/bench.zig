@@ -43,6 +43,27 @@ pub fn run(comptime SimImpl: type, init: std.process.Init) !void {
     const io = init.io;
     const alloc = init.gpa;
 
+    // Parse runtime args: --n <N> and --iters <K>. When --n is present, run
+    // a single N only (no sweep, no golden check) — this is the PMC mode:
+    // the whole process is a clean step() region for xctrace to wrap.
+    var single_n: ?usize = null;
+    var single_iters: ?usize = null;
+    {
+        var it_opt: ?std.process.Args.Iterator = std.process.Args.Iterator.initAllocator(init.minimal.args, alloc) catch null;
+        if (it_opt) |*it| {
+            defer it.deinit();
+            _ = it.next(); // skip program name
+            while (it.next()) |arg| {
+                if (std.mem.eql(u8, arg, "--n")) {
+                    if (it.next()) |val| single_n = std.fmt.parseInt(usize, val, 10) catch null;
+                } else if (std.mem.eql(u8, arg, "--iters")) {
+                    if (it.next()) |val| single_iters = std.fmt.parseInt(usize, val, 10) catch null;
+                }
+            }
+        }
+    }
+    const pmc_mode = single_n != null;
+
     // --- hardware block ---
     const facts = hardware.detect();
     hardware.print(facts);
@@ -51,32 +72,36 @@ pub fn run(comptime SimImpl: type, init: std.process.Init) !void {
     const stage_n = @import("options").stage;
     const is_reference = (stage_n == 1);
 
-    if (is_reference) {
-        std.debug.print("=== Correctness: generating golden file ===\n", .{});
-        const snap = try correctness.capture(SimImpl, alloc, .{ .n = GOLDEN_N, .seed = config.spawn_seed }, GOLDEN_STEPS, config.dt);
-        defer alloc.free(snap.floats);
-        try correctness.writeGolden(GOLDEN_PATH, snap, io);
-        std.debug.print("  wrote {s} (n={d}, steps={d})\n\n", .{ GOLDEN_PATH, snap.n, GOLDEN_STEPS });
-    }
+    if (!pmc_mode) {
+        if (is_reference) {
+            std.debug.print("=== Correctness: generating golden file ===\n", .{});
+            const snap = try correctness.capture(SimImpl, alloc, .{ .n = GOLDEN_N, .seed = config.spawn_seed }, GOLDEN_STEPS, config.dt);
+            defer alloc.free(snap.floats);
+            try correctness.writeGolden(GOLDEN_PATH, snap, io);
+            std.debug.print("  wrote {s} (n={d}, steps={d})\n\n", .{ GOLDEN_PATH, snap.n, GOLDEN_STEPS });
+        }
 
-    // verify (every stage, including stage 1 self-check after generating)
-    {
-        const golden = try correctness.loadGolden(GOLDEN_PATH, alloc, io);
-        defer alloc.free(golden.floats);
-        const cand = try correctness.capture(SimImpl, alloc, .{ .n = GOLDEN_N, .seed = config.spawn_seed }, GOLDEN_STEPS, config.dt);
-        defer alloc.free(cand.floats);
-        const r = correctness.compare(golden, cand, EPS);
-        if (r.passed) {
-            std.debug.print("=== Correctness: PASS (max delta = {d:.2}) ===\n\n", .{r.max_delta});
-        } else {
-            std.debug.print("=== Correctness: FAIL ===\n", .{});
-            std.debug.print("  {d} floats diverge (max delta = {d:.2}, first at index {d})\n\n", .{ r.divergent_count, r.max_delta, r.first_divergent_index });
+        // verify (every stage, including stage 1 self-check after generating)
+        {
+            const golden = try correctness.loadGolden(GOLDEN_PATH, alloc, io);
+            defer alloc.free(golden.floats);
+            const cand = try correctness.capture(SimImpl, alloc, .{ .n = GOLDEN_N, .seed = config.spawn_seed }, GOLDEN_STEPS, config.dt);
+            defer alloc.free(cand.floats);
+            const r = correctness.compare(golden, cand, EPS);
+            if (r.passed) {
+                std.debug.print("=== Correctness: PASS (max delta = {d:.2}) ===\n\n", .{r.max_delta});
+            } else {
+                std.debug.print("=== Correctness: FAIL ===\n", .{});
+                std.debug.print("  {d} floats diverge (max delta = {d:.2}, first at index {d})\n\n", .{ r.divergent_count, r.max_delta, r.first_divergent_index });
+            }
         }
     }
 
     // --- benchmark sweep ---
     const sweep_t0 = Io.Timestamp.now(io, .awake);
-    std.debug.print("=== Benchmark (iters={d}, warmup={d}, trials={d} per N; reporting min) ===\n", .{ ITERS, WARMUP, TRIALS });
+    const iters = if (single_iters) |i| i else ITERS;
+    const sweep_list: []const usize = if (single_n) |n| &.{n} else &SWEEP;
+    std.debug.print("=== Benchmark (iters={d}, warmup={d}, trials={d} per N; reporting min){s}\n", .{ iters, WARMUP, TRIALS, if (pmc_mode) " [PMC mode]" else "" });
     std.debug.print("  {s:>10} | {s:>7} | {s:>9} | {s:>14} | {s:>14} | {s:>11} | {s:>8} | {s:>11}\n", .{
         "N", "bytes/p", "mem(MB)", "ns/particle(min)", "ns/frame(min)", "frames/sec", "GB/s eff", "runtime(ms)",
     });
@@ -87,7 +112,7 @@ pub fn run(comptime SimImpl: type, init: std.process.Init) !void {
     var total_runtime_ms: f64 = 0;
     var total_frames: u64 = 0;
 
-    for (SWEEP) |n| {
+    for (sweep_list) |n| {
         var sim = SimImpl.init(alloc, .{ .n = n, .seed = config.spawn_seed }) catch |e| {
             std.debug.print("  {d:>10} | (init failed: {t})\n", .{ n, e });
             continue;
@@ -113,11 +138,11 @@ pub fn run(comptime SimImpl: type, init: std.process.Init) !void {
 
             const t0 = Io.Timestamp.now(io, .awake);
             var it: usize = 0;
-            while (it < ITERS) : (it += 1) sim.step(config.dt);
+            while (it < iters) : (it += 1) sim.step(config.dt);
             const t1 = Io.Timestamp.now(io, .awake);
             const ns: f64 = @floatFromInt(t0.durationTo(t1).nanoseconds);
             trial_runtime_ns += ns;
-            const ns_frame: f64 = ns / @as(f64, @floatFromInt(ITERS));
+            const ns_frame: f64 = ns / @as(f64, @floatFromInt(iters));
             if (ns_frame < min_ns_frame) min_ns_frame = ns_frame;
             if (ns_frame > max_ns_frame) max_ns_frame = ns_frame;
         }
@@ -129,7 +154,7 @@ pub fn run(comptime SimImpl: type, init: std.process.Init) !void {
         const gbs_eff: f64 = @as(f64, @floatFromInt(working_set_bytes)) / min_ns_frame;
         const runtime_ms: f64 = trial_runtime_ns / 1e6;
         total_runtime_ms += runtime_ms;
-        total_frames += @as(u64, n) * ITERS * TRIALS;
+        total_frames += @as(u64, n) * iters * TRIALS;
 
         std.debug.print("  {d:>10} | {d:>7} | {d:>9.1} | {d:>14.3} | {d:>14.1} | {d:>11.1} | {d:>8.2} | {d:>11.1}\n", .{
             n, bytes_per_p, working_set_mb, ns_per_particle, min_ns_frame, frames_sec, gbs_eff, runtime_ms,
