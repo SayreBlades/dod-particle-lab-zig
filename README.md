@@ -156,7 +156,71 @@ makes the bandwidth plateau obvious: ~80 B/particle × N. Stage 2 (hot/cold)
 shrinks bytes/particle → lifts the whole plateau down. Stage 3 (SoA)
 shrinks further. Stage 9 (synthesis) should be ~8–15× lower at N=1M.
 
+### Bench columns and what they diagnose
+
+The bench table reports more than `ns/particle` — the other columns are
+the *diagnostic instruments* that tell you *why* a stage is fast or slow:
+
+| column | what it is | what it tells you |
+|---|---|---|
+| `bytes/p` | hot-loop bytes touched per particle (`sim.bytesPerParticle`) | the per-particle working set; shrinks as cold fields leave the hot loop |
+| `mem(MB)` | `N × bytes/p` — per-frame working set | which cache level the working set lives in (L1/L2/SLC/DRAM) |
+| `ns/particle(min)` | cleanest per-particle cost (min of 3 trials) | the headline number for cross-stage comparison |
+| `GB/s eff` | `N × bytes/p ÷ ns/frame` — effective hot-loop bandwidth | **the key diagnostic:** bandwidth-bound vs compute/overhead-bound (see below) |
+| `runtime(ms)` | wall time spent at this N across all trials | the real bench cost; sums to the TOTAL row |
+
+The single-core streaming ceiling on this M4 is ~**54 GB/s** (measured:
+stage 1 hits it at 262K, cache-resident). `GB/s eff` tells you where a stage
+sits relative to that ceiling:
+
+- **Near the ceiling (~54 GB/s)** → **bandwidth-bound.** The loop is keeping
+  the memory subsystem busy; FP is hidden behind the loads. Cutting
+  `bytes/p` is the lever (stages 2, 3).
+- **Well below the ceiling** → **compute/overhead-bound.** The loop is
+  spending its time on FP math, loop branches, stream management, or latency
+  stalls — not waiting on memory. Cutting `bytes/p` *won't help*; you have to
+  raise throughput (SIMD, fewer streams, branchless) or cut the compute.
+
+This distinction is the key to reading stages 2 and 3: stage 2 is already
+off the ceiling (~33 GB/s, 62%) — compute-bound, not bandwidth-bound — so
+the stage-3 byte-reduction (36→29 B/p) can't win on its own. The `GB/s eff`
+column caught that before any reasoning did.
+
+### Vocabulary: "stream" and "number of streams"
+
+A **stream** is one contiguous run of memory addresses the program touches in
+sequential order — the thing the CPU's hardware prefetcher tracks as a single
+unit. `for (arr) |x|` walks one stream; `for (a, b) |x, y|` walks two.
+
+- The prefetcher has a limited number of entries / L1 fill buffers (~10–13 on
+  this M4 core). Each stream you walk consumes one.
+- One stream = the prefetcher's happy case: it fetches ahead, you never stall.
+- Many concurrent streams compete for the same fill buffers. If a loop walks
+  8 streams at once, each gets ~1/8 of the prefetcher's tracking bandwidth.
+
+This matters for the AoS-vs-SoA trade:
+- **Stage 2 (AoS)** walks **1 stream** — one `[]ParticleHot` array, one base
+  pointer advancing by `sizeof(ParticleHot)`. Prefetcher-perfect. But it
+  drags 7 wasted bytes/particle through the line (`life` + padding).
+- **Stage 3 (SoA)** walks **8 streams** — `pos_x, pos_y, pos_z, vel_x, vel_y,
+  vel_z, age, kind`. Each is contiguous and dense (no stride waste), but the
+  loop manages 8 independent base pointers across 4 passes.
+
+The trade: give up one perfectly-prefetched stream to save 7 B/particle and
+gain per-component density. On a *bandwidth-bound* loop that trade wins
+(fewer bytes × 8 streams still saturates memory). On a *compute-bound* loop
+(stage 2 at 33 GB/s, 62% of ceiling) it loses: the 7 B saving is irrelevant
+against the compute floor, and the 8-stream reorganization adds loop-branch
+overhead (4 passes vs 1) and prefetcher complexity — with no SIMD to amortize
+it (stage 3 is scalar; SIMD is stage 6's reward for the layout).
+
+So "number of streams" is shorthand for "how many independent sequential
+memory accesses the loop interleaves." Fewer is usually better, *unless*
+reducing streams means dragging useless bytes through cache (the AoS-vs-SoA
+trade). The lab's whole story is a measured walk through that trade.
+
 ## Checkpoints
+
 
 | #  | Checkpoint                                  | Stage | Complete |
 |----|---------------------------------------------|-------|----------|
