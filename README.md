@@ -247,25 +247,64 @@ categories; `cycles` is their sum. Read the categories as percentages of
    - all three low but % Useful still not great → the work itself is the
      bottleneck, needs SIMD (stage 6)
 
-**First data** (N=1M, 500 iters, trial 1) confirms the bench's `GB/s eff`
-story at the cycle level:
+**Full sweep data** (3 trials per (stage, N), min-of-3 cycles, ReleaseFast, M4 —
+full CSV at `.scratch/pmc/pmc_rollup.csv`):
 
 ```
-stage | cycles  | % useful | % processing | % delivery | % discarded
-  1   | 22.5M   |   48.6%  |     40.3%    |    0.2%    |    11.0%
-  2   | 15.3M   |   69.7%  |     13.2%    |    0.3%    |    16.8%
-  3   | 25.4M   |   70.5%  |     17.8%    |    5.0%    |     6.8%
+stage |     N |   cycles | %useful | %proc | %deliv | %disc
+------+-------+----------+---------+-------+--------+------
+  1   |    4K |    318K  |   55.1% | 26.5% |   4.1% | 14.4%
+  1   |   65K |   1.15M  |   58.2% | 27.1% |   1.4% | 13.2%
+  1   |  262K |   2.06M  |   58.0% | 28.2% |   0.8% | 12.9%
+  1   |    1M |   4.99M  |   48.1% | 41.3% |   0.4% | 10.2%
+  1   |    4M |  12.4M   |   42.4% | 48.9% |   0.2% |  8.4%
+  1   |   64M |  82.5M   |   40.9% | 51.8% |   0.7% |  6.6%
+  2   |    4K |    308K  |   65.6% | 10.5% |   4.9% | 19.0%
+  2   |   65K |   1.08M  |   69.0% | 12.6% |   1.6% | 16.7%
+  2   |  262K |   1.83M  |   68.9% | 13.7% |   1.0% | 16.4%
+  2   |    1M |   3.69M  |   69.1% | 14.5% |   0.6% | 15.8%
+  2   |    4M |   8.21M  |   68.6% | 16.3% |   0.4% | 14.6%
+  2   |   64M |  51.9M   |   64.8% | 24.9% |   0.4% |  9.9%
+  3   |    4K |    438K  |   68.7% | 14.8% |   9.1% |  7.5%
+  3   |   65K |   1.67M  |   71.8% | 15.1% |   6.2% |  7.0%
+  3   |  262K |   2.78M  |   70.9% | 16.7% |   5.7% |  6.7%
+  3   |    1M |   5.71M  |   69.5% | 19.3% |   4.8% |  6.4%
+  3   |    4M |  11.5M   |   65.1% | 23.8% |   4.5% |  6.6%
+  3   |   64M |  44.5M   |   50.4% | 37.4% |   5.0% |  7.2%
 ```
 
-- **Stage 2's win** = converting Processing stalls (memory: 40→13%) into Useful
-  work (49→70%). The hot/cold split stopped dragging cold bytes through cache,
-  so the backend stopped stalling.
-- **Stage 3's loss** = same % Useful as stage 2 (~70% — both compute-bound at
-  the same efficiency) but 1.66× more total cycles. The 8-stream overhead
-  shows up directly as more Processing (13→18%) and Delivery stalls
-  (0.3→5.0%, the multi-pass frontend pressure). **The layout didn't change
-  utilization; it added overhead** — the cycle-level confirmation of the
-  `GB/s eff` story.
+Reading the sweep (the cycle-level story behind the `GB/s eff` column):
+
+- **Stage 1, large N:** % Useful drops to ~41%, % Processing rises to ~52% —
+  the bandwidth-bound signature. The 68 B/particle AoS thrashes cache; the
+  backend stalls waiting on memory. The `GB/s eff` column (~46 GB/s, near the
+  54 ceiling) says "bandwidth-bound"; the PMC says *where* the lost cycles went.
+- **Stage 2's win:** % Useful jumps to ~69% (stable across N) — the hot/cold
+  split stopped dragging cold bytes through cache, so % Processing dropped
+  41→14% at 1M. **The cold bytes were the bottleneck, and removing them converted
+  stall cycles into useful cycles.** % Discarded rose (the `switch(kind)` is
+  now a bigger fraction of a smaller total).
+- **Stage 3 at small/mid N:** % Useful ~70-72% — **the same efficiency as
+  stage 2** (both compute-bound at ~70%). But stage 3 needs more total cycles
+  (e.g. 5.71M vs 3.69M at 1M) for the same work — the 8-stream overhead. The
+  extra cycles show up as % Delivery (5-9% vs stage 2's <1% — the multi-pass
+  frontend pressure) and slightly more % Processing (the 8-stream prefetcher
+  juggling).
+- **Stage 3 at large N (64M):** % Useful drops to 50% — below stage 2's 65%.
+  The 8-stream SoA can't keep the prefetcher fed at DRAM-bandwidth scale; %
+  Processing rises to 37% (vs stage 2's 25%). **At large N, the layout's
+  overhead compounds and stage 3 loses on both cycles AND utilization.**
+- **% Discarded across stages:** stage 2 (10-19%) > stage 1 (7-14%) > stage 3
+  (6-8%). Stage 2's switch is a bigger fraction of its tighter loop; stage 3's
+  per-component loops have fewer unpredictable branches. Stage 5 (sort-by-kind)
+  will attack this directly.
+
+**The cross-stage pattern the PMC reveals:** stages 2 and 3 have the **same
+% Useful at small/mid N** (~70%) — proving they're both compute-bound at the
+same per-cycle efficiency. Stage 3's loss is *more cycles*, not *worse
+efficiency*. Stage 6's `@Vector` should raise % Useful itself (more math per
+retired instruction), which is the throughput lever stage 3's layout unlocks
+but doesn't claim (scalar, per P7).
 
 Full collection design (per-stage, per-N, multi-trial) is documented in
 `plan.md` §2.2–2.3. The PMC collection is a *context instrument* (same pattern
