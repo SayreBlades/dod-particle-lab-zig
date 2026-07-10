@@ -219,6 +219,60 @@ memory accesses the loop interleaves." Fewer is usually better, *unless*
 reducing streams means dragging useless bytes through cache (the AoS-vs-SoA
 trade). The lab's whole story is a measured walk through that trade.
 
+### PMC counters — cycle-saturation (xctrace CPU Counters)
+
+The `GB/s eff` column is a *bandwidth-side* proxy for "is the CPU saturated?"
+For the cycle-side answer — *why* the CPU isn't saturated — use the PMC
+(performance monitor counter) collection via `scripts/pmc_collect.sh`, which
+wraps `xctrace`'s "CPU Counters" template in its default **CPU Bottlenecks**
+guided mode. This classifies every retired cycle into exactly one of four
+categories; `cycles` is their sum. Read the categories as percentages of
+`cycles` to diagnose what a stage is actually spending its time on.
+
+| column | what it counts | what it tells you |
+|---|---|---|
+| `cycles` | total cycles on the cores (sum of the other 4) | the denominator; headline is "% of cycles" |
+| `useful` | cycles actually *retiring instructions* (frontend fed the backend, data ready, instruction committed) | **high % Useful = FPU is doing real work.** The cycle-saturation measure. Stage 6's `@Vector` should push this up (each NEON `fma` retires 4× the math of a scalar `fma`) |
+| `processing_bottleneck` | backend stalls — instruction in flight but operands not ready (cache misses, TLB walks, data dependencies) | **high % Processing = memory/latency-bound.** Stage 1's 40% lives here (68 B/particle AoS thrashes cache); stage 2's hot/cold split pays off (40→13%) because fewer cold bytes means fewer backend stalls waiting on cache refills |
+| `delivery_bottleneck` | frontend stalls — backend *could* retire but the frontend can't feed it fast enough (icache misses, branch-target-misprediction fetch bubbles, decode bandwidth limits) | **high % Delivery = frontend/icache pressure.** Near-zero for tiny loops; rises with multi-pass structure. Stage 3's jump to 5% is the signature of SoA's 4-pass loop transitions |
+| `discarded_bottleneck` | cycles spent on *wrong-path* work from branch mispredictions (fetched/decoded/executed past a branch that went the wrong way, then flushed) | **high % Discarded = branch misprediction cost.** Stage 1's 11% is the deliberate per-particle `switch(kind)` — three interleaved kinds, hard to predict. Stage 5 (sort-by-kind) removes the branch entirely |
+
+**How to read a row.** Pick a stage, read the percentages top-down:
+1. **% Useful** tells you the efficiency ceiling — how saturated the FPU is.
+2. Then look at where the *rest* of the cycles went. That breakdown tells you
+   *what to fix next*:
+   - high **Processing** → cut bytes/particle or improve locality (stages 2, 3, 7)
+   - high **Discarded** → remove the unpredictable branch (stages 4, 5)
+   - high **Delivery** → simplify the loop structure, fewer passes (informs the SoA-vs-AoS trade)
+   - all three low but % Useful still not great → the work itself is the
+     bottleneck, needs SIMD (stage 6)
+
+**First data** (N=1M, 500 iters, trial 1) confirms the bench's `GB/s eff`
+story at the cycle level:
+
+```
+stage | cycles  | % useful | % processing | % delivery | % discarded
+  1   | 22.5M   |   48.6%  |     40.3%    |    0.2%    |    11.0%
+  2   | 15.3M   |   69.7%  |     13.2%    |    0.3%    |    16.8%
+  3   | 25.4M   |   70.5%  |     17.8%    |    5.0%    |     6.8%
+```
+
+- **Stage 2's win** = converting Processing stalls (memory: 40→13%) into Useful
+  work (49→70%). The hot/cold split stopped dragging cold bytes through cache,
+  so the backend stopped stalling.
+- **Stage 3's loss** = same % Useful as stage 2 (~70% — both compute-bound at
+  the same efficiency) but 1.66× more total cycles. The 8-stream overhead
+  shows up directly as more Processing (13→18%) and Delivery stalls
+  (0.3→5.0%, the multi-pass frontend pressure). **The layout didn't change
+  utilization; it added overhead** — the cycle-level confirmation of the
+  `GB/s eff` story.
+
+Full collection design (per-stage, per-N, multi-trial) is documented in
+`plan.md` §2.2–2.3. The PMC collection is a *context instrument* (same pattern
+as the audit) — run it when you need the cycle-saturation story, not on every
+bench invocation. Requires Xcode (xctrace); if unavailable, `powermetrics
+--show-process-ipc` (sudo) gives per-process IPC only.
+
 ## Checkpoints
 
 
