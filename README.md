@@ -10,7 +10,7 @@ laid out memory for the loops instead of for the concept, the loops got 10× fas
 and the code got simpler. This lab walks through that transformation in stages;
 the math never changes between stages, only the data layout and access pattern do.
 
-**Status:** Stage 3 of 9 — last landed C6 (flagship *layout* move: AoS→SoA. The layout lands — audit density 0.655→0.722, `life` leaves the hot loop — but on Zig 0.17-dev, which doesn't autovectorize, scalar-SoA is ~1.5× slower than stage 2: the layout's overhead is uncompensated without the SIMD reward, which is stage 6's job per P7. The time win is deferred, not lost.)
+**Status:** Stage 4 of 9 — last landed C7/stage 4 (branchless compaction: the branchy `if (age >= kill_age) respawn(i)` becomes an alive mask + arithmetic-destination compaction — `dest = write * is_alive + i * (1 - is_alive)`, zero `if` in the compaction loop. P5: turn data-dependent control flow into data-dependent arithmetic. Two audit-predicted reclaims besides the branch: `life` leaves *storage* entirely (was a constant), and the entire `cold` array is deleted — `color` → `kindColor(kind)` lookup, `size`/`rotation`/`mass`/`flags` hardcoded, `seed` was dead data. ~54 B/particle of constant/dead data gone. Golden PASS. The technique lands; the time is overhead in the natural alive pattern — the payoff is under adversarial input, where the branchy version mispredicts ~50% and the branchless version mispredicts 0%.)
 
 ## Quick start
 
@@ -271,6 +271,12 @@ stage |     N |   cycles | %useful | %proc | %deliv | %disc
   3   |    1M |   5.71M  |   69.5% | 19.3% |   4.8% |  6.4%
   3   |    4M |  11.5M   |   65.1% | 23.8% |   4.5% |  6.6%
   3   |   64M |  44.5M   |   50.4% | 37.4% |   5.0% |  7.2%
+  4   |    4K |    729K  |   57.2% | 31.4% |  10.6% |   0.9%
+  4   |   65K |   3.29M  |   52.8% | 37.8% |   9.0% |   0.3%
+  4   |  262K |   6.16M  |   47.0% | 45.0% |   7.7% |   0.4%
+  4   |    1M |  12.71M  |   44.7% | 47.8% |   7.1% |   0.5%
+  4   |    4M |  26.56M  |   43.5% | 49.2% |   7.0% |   0.2%
+  4   |   64M |  93.66M  |   36.7% | 59.3% |   3.7% |   0.3%
 ```
 
 Reading the sweep (the cycle-level story behind the `GB/s eff` column):
@@ -298,6 +304,22 @@ Reading the sweep (the cycle-level story behind the `GB/s eff` column):
   (6-8%). Stage 2's switch is a bigger fraction of its tighter loop; stage 3's
   per-component loops have fewer unpredictable branches. Stage 5 (sort-by-kind)
   will attack this directly.
+- **Stage 4 — the P5 payoff, measured:** % Discarded **collapsed to ~0.3-0.9%**
+  (from stage 3's 6-8%) — the branchless compaction **eliminated the kill-branch
+  mispredictions**, exactly as P5 predicted. The branchy `if (age >= kill_age)`
+  was the source of the discarded cycles; branchless arithmetic-destination
+  compaction (`dest = write * is_alive + i * (1 - is_alive)`, zero `if`) drove
+  % Discarded to near-zero. **This is the technique landing, measured on the
+  cycle side.** But % Useful also dropped (to 37-57%, from stage 3's 50-72%):
+  the compaction pass is O(n) every frame (8 reads + 8 writes per particle) and
+  stalls the backend — % Processing rose to 31-59% (from stage 3's 15-37%).
+  Stage 4 traded branch-misprediction cycles for memory-stall cycles. Net:
+  slower, because the compaction overhead (a full O(n) pass touching all 8 hot
+  streams) vastly exceeds the saved mispredictions (~6-8% → ~0.5%). The `GB/s eff`
+  column confirms: ~7.5 GB/s (vs stage 3's ~17) — the same bytes touched more
+  times (math + compaction), not fewer. The P5 payoff regime is adversarial
+  alive patterns, where the branchy version's % Discarded would hit ~50% and
+  the branchless version's stays at ~0%.
 
 **The cross-stage pattern the PMC reveals:** stages 2 and 3 have the **same
 % Useful at small/mid N** (~70%) — proving they're both compute-bound at the
@@ -323,7 +345,7 @@ bench invocation. Requires Xcode (xctrace); if unavailable, `powermetrics
 | C4 | Stage 1 fully passes acceptance (baseline)     | 1     | [x]      |
 | C5 | Stage 2 (hot/cold) — first measured DOD win    | 2     | [x]      |
 | C6 | Stage 3 (SoA) — flagship layout transformation | 3     | [x]      |
-| C7 | Stages 4–9 each pass acceptance                | 4–9   | [ ]      |
+| C7 | Stages 4–9 each pass acceptance                | 4–9   | stage 4 ✅ / 5–9 [ ] |
 | C8 | Synthesis verified, RESULTS recorded           | 9     | [ ]      |
 | C9 | Bonus stages (rasterizer + video export)       | 10,11 | [ ]      |
 
