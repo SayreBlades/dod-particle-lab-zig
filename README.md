@@ -10,7 +10,7 @@ laid out memory for the loops instead of for the concept, the loops got 10× fas
 and the code got simpler. This lab walks through that transformation in stages;
 the math never changes between stages, only the data layout and access pattern do.
 
-**Status:** Stage 4 of 9 — last landed C7/stage 4 (branchless compaction: the branchy `if (age >= kill_age) respawn(i)` becomes an alive mask + arithmetic-destination compaction — `dest = write * is_alive + i * (1 - is_alive)`, zero `if` in the compaction loop. P5: turn data-dependent control flow into data-dependent arithmetic. Two audit-predicted reclaims besides the branch: `life` leaves *storage* entirely (was a constant), and the entire `cold` array is deleted — `color` → `kindColor(kind)` lookup, `size`/`rotation`/`mass`/`flags` hardcoded, `seed` was dead data. ~54 B/particle of constant/dead data gone. Golden PASS. The technique lands; the time is overhead in the natural alive pattern — the payoff is under adversarial input, where the branchy version mispredicts ~50% and the branchless version mispredicts 0%.)
+**Status:** Stage 5 of 9 — last landed C7/stage 5 (sort-by-kind / de-virtualize: the per-particle `switch(kind)` dispatch moves out of the hot loop and into the data layout via a Dutch-flag 3-way partition — `[smoke…, spark…, debris…]` contiguous runs, no per-particle switch. P6: per-element dispatch is a layout problem in disguise. The structure lands — audit: `kind` density 0.320→0.044, the switch is gone from source. But the time is overhead: the switch was already compiler-optimized away (empty cases — PMC confirmed stage 4's % Discarded ~0.5% WITH the switch), and the sort adds O(n) overhead + its own branch cost — the Dutch flag's 3-way branch on randomly-ordered kinds is unpredictable, and % Discarded ROSE to 2–4.7%. The ironic finding: de-virtualizing a free dispatch made things slower. The time win P6 promises requires per-kind work or SIMD (stage 6, where per-kind runs enable kind-specialized vectorized loops).)
 
 ## Quick start
 
@@ -320,6 +320,21 @@ Reading the sweep (the cycle-level story behind the `GB/s eff` column):
   times (math + compaction), not fewer. The P5 payoff regime is adversarial
   alive patterns, where the branchy version's % Discarded would hit ~50% and
   the branchless version's stays at ~0%.
+- **Stage 5 — the P6 irony, measured:** % Discarded **rose** from stage 4's
+  ~0.5% to **2–4.7%**. Stage 5 de-virtualized the per-particle `switch(kind)`
+  by sorting particles by kind (Dutch-flag 3-way partition). But the switch
+  was already compiler-optimized away (empty cases — stage 4's % Discarded was
+  ~0.5% WITH the switch), so removing it saved nothing. Meanwhile the sort's
+  own 3-way branch (`if k==0 ... else if k==1 ... else ...`) is unpredictable —
+  kinds are randomly interleaved before sorting, so the predictor mispredicts
+  ~67% of the time. **The sort's branch is worse than the (free) switch it
+  replaced.** The de-virtualization *structure* lands (audit: `kind` density
+  0.320→0.044 — the sorted kind array compresses to nothing), but the *time*
+  is overhead on both axes: O(n) sort cost (touches all 8 hot streams) AND
+  higher % Discarded. % Useful dropped to 30–48%, % Processing rose to 43–65%.
+  The time win P6 promises requires per-kind WORK (not present — all kinds
+  share the same physics) or SIMD (stage 6, where per-kind runs enable
+  kind-specialized vectorized loops).
 
 **The cross-stage pattern the PMC reveals:** stages 2 and 3 have the **same
 % Useful at small/mid N** (~70%) — proving they're both compute-bound at the
@@ -345,7 +360,7 @@ bench invocation. Requires Xcode (xctrace); if unavailable, `powermetrics
 | C4 | Stage 1 fully passes acceptance (baseline)     | 1     | [x]      |
 | C5 | Stage 2 (hot/cold) — first measured DOD win    | 2     | [x]      |
 | C6 | Stage 3 (SoA) — flagship layout transformation | 3     | [x]      |
-| C7 | Stages 4–9 each pass acceptance                | 4–9   | stage 4 ✅ / 5–9 [ ] |
+| C7 | Stages 4–9 each pass acceptance                | 4–9   | stages 4–5 ✅ / 6–9 [ ] |
 | C8 | Synthesis verified, RESULTS recorded           | 9     | [ ]      |
 | C9 | Bonus stages (rasterizer + video export)       | 10,11 | [ ]      |
 
