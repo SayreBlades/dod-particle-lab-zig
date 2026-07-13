@@ -10,7 +10,7 @@ laid out memory for the loops instead of for the concept, the loops got 10× fas
 and the code got simpler. This lab walks through that transformation in stages;
 the math never changes between stages, only the data layout and access pattern do.
 
-**Status:** Stage 5 of 9 — last landed C7/stage 5 (sort-by-kind / de-virtualize: the per-particle `switch(kind)` dispatch moves out of the hot loop and into the data layout via a Dutch-flag 3-way partition — `[smoke…, spark…, debris…]` contiguous runs, no per-particle switch. P6: per-element dispatch is a layout problem in disguise. The structure lands — audit: `kind` density 0.320→0.044, the switch is gone from source. But the time is overhead: the switch was already compiler-optimized away (empty cases — PMC confirmed stage 4's % Discarded ~0.5% WITH the switch), and the sort adds O(n) overhead + its own branch cost — the Dutch flag's 3-way branch on randomly-ordered kinds is unpredictable, and % Discarded ROSE to 2–4.7%. The ironic finding: de-virtualizing a free dispatch made things slower. The time win P6 promises requires per-kind work or SIMD (stage 6, where per-kind runs enable kind-specialized vectorized loops).)
+**Status:** Stage 6 of 9 — last landed C7/stage 6 (**the payoff stage**: `@Vector(4, f32)` — 128-bit NEON — over stage 3's per-component SoA streams. Each NEON `fma` retires 4× the math of a scalar `fma`. P7: SIMD is a reward for layout — stage 3 laid the SoA streams and paid the overhead (losing to stage 2 on this toolchain); stage 6 finally collects the throughput reward. **The first stage to beat stage 2 on time**: 0.848 vs 1.102 ns/p at 1M (1.30× faster), beating stage 2 at every N≥65K. GB/s eff jumped from stage 3's ~17 to ~34 — the compute ceiling lifted and the loop approached bandwidth-bound. Width sweep confirms W=4 (native NEON) is the minimum. The roofline is visible: speedup narrows from 1.86× (65K, cache-resident) to 1.08× (64M, bandwidth-bound). Builds on stage 3's clean SoA — stages 4/5's compaction/sort will be recomposed in stage 9's synthesis. Fixes a color bug inherited from stage 3: color is now computed from kind in render, not stored in a stale cold array.)
 
 ## Quick start
 
@@ -277,6 +277,17 @@ stage |     N |   cycles | %useful | %proc | %deliv | %disc
   4   |    1M |  12.71M  |   44.7% | 47.8% |   7.1% |   0.5%
   4   |    4M |  26.56M  |   43.5% | 49.2% |   7.0% |   0.2%
   4   |   64M |  93.66M  |   36.7% | 59.3% |   3.7% |   0.3%
+  5   |    4K |   1.26M  |   47.8% | 42.7% |   7.5% |   2.0%
+  5   |   65K |   5.50M  |   44.5% | 46.1% |   6.7% |   2.7%
+  5   |  262K |  13.82M  |   29.0% | 65.1% |   4.2% |   1.7%
+  5   |    1M |  22.22M  |   36.5% | 54.7% |   5.4% |   3.4%
+  5   |   64M | 170.79M  |   29.7% | 63.0% |   2.6% |   4.6%
+  6   |    4K |    219K  |   57.4% |  8.2% |  21.1% |  13.2%
+  6   |   65K |    885K  |   56.6% | 13.2% |  17.3% |  12.9%
+  6   |  262K |   1.46M  |   56.5% | 15.1% |  15.9% |  12.5%
+  6   |    1M |   3.12M  |   53.4% | 21.7% |  13.6% |  11.4%
+  6   |    4M |   8.15M  |   45.2% | 35.9% |   9.8% |   9.0%
+  6   |   64M |  49.26M  |   41.3% | 46.0% |   6.3% |   6.5%
 ```
 
 Reading the sweep (the cycle-level story behind the `GB/s eff` column):
@@ -335,6 +346,18 @@ Reading the sweep (the cycle-level story behind the `GB/s eff` column):
   The time win P6 promises requires per-kind WORK (not present — all kinds
   share the same physics) or SIMD (stage 6, where per-kind runs enable
   kind-specialized vectorized loops).
+- **Stage 6 — the P7 payoff, measured:** total cycles **dropped from 5.71M to
+  3.12M at 1M** (the SIMD retires 4× the math/cycle → ~half the cycles for the
+  same work). This is the throughput reward P7 promised, measured directly. %
+  Useful *dropped* from 69.5% to 53.4% — surprising, but the *absolute* useful
+  cycles are fewer (1.67M vs 3.97M). The bottleneck *shifted*: % Delivery rose
+  to 13.6% (vectorized loop frontend pressure — wider instructions, vector
+  loads/stores) and % Discarded rose to 11.4% (the per-particle switch is now a
+  bigger fraction of the tighter loop — same pattern as stage 2). At 64M, %
+  Processing rises to 46% — the bandwidth ceiling bites (the roofline: stage 3
+  was compute-bound; stage 6 lifted the compute ceiling and hit the bandwidth
+  roof). **Stage 6 finally beats stage 2 on time** — 0.848 vs 1.102 ns/p at 1M
+  (the win stage 3 deferred is claimed).
 
 **The cross-stage pattern the PMC reveals:** stages 2 and 3 have the **same
 % Useful at small/mid N** (~70%) — proving they're both compute-bound at the
@@ -360,7 +383,7 @@ bench invocation. Requires Xcode (xctrace); if unavailable, `powermetrics
 | C4 | Stage 1 fully passes acceptance (baseline)     | 1     | [x]      |
 | C5 | Stage 2 (hot/cold) — first measured DOD win    | 2     | [x]      |
 | C6 | Stage 3 (SoA) — flagship layout transformation | 3     | [x]      |
-| C7 | Stages 4–9 each pass acceptance                | 4–9   | stages 4–5 ✅ / 6–9 [ ] |
+| C7 | Stages 4–9 each pass acceptance                | 4–9   | stages 4–6 ✅ / 7–9 [ ] |
 | C8 | Synthesis verified, RESULTS recorded           | 9     | [ ]      |
 | C9 | Bonus stages (rasterizer + video export)       | 10,11 | [ ]      |
 
