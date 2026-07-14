@@ -14,7 +14,7 @@
 set -euo pipefail
 
 TRIALS="${1:-3}"
-STAGES="1 2 3 4 5 6"
+STAGES="1 2 3 4 5 6 7"
 
 # N → iters pairs (space-separated list of "N:iters"). Smaller N gets more
 # iters (each step is cheap); larger N gets fewer (each step is already slow).

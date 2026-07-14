@@ -10,6 +10,7 @@ const SimImpl = switch (opts.stage) {
     4 => @import("stages/04_compact/sim.zig").Sim,
     5 => @import("stages/05_sortbykind/sim.zig").Sim,
     6 => @import("stages/06_simd/sim.zig").Sim,
+    7 => @import("stages/07_align/sim.zig").Sim,
     else => @compileError("stage not yet implemented"),
 };
 

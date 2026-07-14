@@ -10,7 +10,7 @@ laid out memory for the loops instead of for the concept, the loops got 10× fas
 and the code got simpler. This lab walks through that transformation in stages;
 the math never changes between stages, only the data layout and access pattern do.
 
-**Status:** Stage 6 of 9 — last landed C7/stage 6 (**the payoff stage**: `@Vector(4, f32)` — 128-bit NEON — over stage 3's per-component SoA streams. Each NEON `fma` retires 4× the math of a scalar `fma`. P7: SIMD is a reward for layout — stage 3 laid the SoA streams and paid the overhead (losing to stage 2 on this toolchain); stage 6 finally collects the throughput reward. **The first stage to beat stage 2 on time**: 0.848 vs 1.102 ns/p at 1M (1.30× faster), beating stage 2 at every N≥65K. GB/s eff jumped from stage 3's ~17 to ~34 — the compute ceiling lifted and the loop approached bandwidth-bound. Width sweep confirms W=4 (native NEON) is the minimum. The roofline is visible: speedup narrows from 1.86× (65K, cache-resident) to 1.08× (64M, bandwidth-bound). Builds on stage 3's clean SoA — stages 4/5's compaction/sort will be recomposed in stage 9's synthesis. Fixes a color bug inherited from stage 3: color is now computed from kind in render, not stored in a stale cold array.)
+**Status:** Stage 7 of 9 — last landed C7/stage 7 (alignment + padding to the cache line: each SoA stream allocated 128 B-aligned via `alignedAlloc` (`hw.cachelinesize = 128`), lengths padded to a multiple of W=4 — the vectorized math pass is now a single tight loop with **no scalar tail branch**. P8: sizes/alignments are parameters matched to the hardware. The PMC-measured win: % Delivery (stage 6's residual frontend bottleneck) dropped ~30–40% at every N (13.6%→9.0% at 1M, 21.1%→15.6% at 4K). Time win small and concentrated at the cache-resident sweet spot (1M: 0.821 vs 0.848, ~3% faster) — honest, because % Delivery was never the dominant cost; P8 is a parameter tuning, not a transformation. The guard region `[n..n_padded]` (≤3 elements, zeroed) is processed by math but never observed by snapshot/age/kill/render. Builds on stage 6. Honest scope: the plan's bitset-line tiling / hot-block-per-particle lessons are AoS/bitset framings that don't apply to clean SoA streaming (streams already 32 particles/line, maximally dense) — those land in stage 9's synthesis.)
 
 ## Quick start
 
@@ -288,6 +288,12 @@ stage |     N |   cycles | %useful | %proc | %deliv | %disc
   6   |    1M |   3.12M  |   53.4% | 21.7% |  13.6% |  11.4%
   6   |    4M |   8.15M  |   45.2% | 35.9% |   9.8% |   9.0%
   6   |   64M |  49.26M  |   41.3% | 46.0% |   6.3% |   6.5%
+  7   |    4K |    209K  |   59.5% | 11.0% |  15.6% |  13.9%
+  7   |   65K |    865K  |   56.6% | 18.4% |  11.7% |  13.3%
+  7   |  262K |   1.43M  |   56.6% | 19.4% |  11.1% |  12.9%
+  7   |    1M |   3.02M  |   54.2% | 24.8% |   9.0% |  12.0%
+  7   |    4M |   7.66M  |   46.9% | 36.8% |   6.6% |   9.7%
+  7   |   64M |  39.24M  |   40.9% | 47.3% |   4.7% |   7.1%
 ```
 
 Reading the sweep (the cycle-level story behind the `GB/s eff` column):
@@ -358,6 +364,17 @@ Reading the sweep (the cycle-level story behind the `GB/s eff` column):
   was compute-bound; stage 6 lifted the compute ceiling and hit the bandwidth
   roof). **Stage 6 finally beats stage 2 on time** — 0.848 vs 1.102 ns/p at 1M
   (the win stage 3 deferred is claimed).
+- **Stage 7 — the P8 win, measured:** % Delivery **dropped ~30–40% at every N**
+  (13.6%→9.0% at 1M, 21.1%→15.6% at 4K) — the alignment (128 B-aligned streams,
+  no line-straddling vector loads) + padding (lengths a multiple of W, no scalar
+  tail branch) removed the frontend bottleneck stage 6's PMC revealed. Total
+  cycles dropped at most N (1M: 3.12M→3.02M; 64M: 49.3M→39.2M). The time win is
+  small and concentrated at the cache-resident sweet spot (1M: ~3% faster) —
+  honest, because % Delivery was never the dominant cost (bandwidth at large N,
+  the switch elsewhere are larger). P8 is a parameter tuning, not a
+  transformation. The plan's bitset-line tiling / hot-block-per-particle lessons
+  are AoS/bitset framings that don't apply to clean SoA streaming (streams are
+  already 32 particles/line, maximally dense) — those land in stage 9's synthesis.
 
 **The cross-stage pattern the PMC reveals:** stages 2 and 3 have the **same
 % Useful at small/mid N** (~70%) — proving they're both compute-bound at the
@@ -383,7 +400,7 @@ bench invocation. Requires Xcode (xctrace); if unavailable, `powermetrics
 | C4 | Stage 1 fully passes acceptance (baseline)     | 1     | [x]      |
 | C5 | Stage 2 (hot/cold) — first measured DOD win    | 2     | [x]      |
 | C6 | Stage 3 (SoA) — flagship layout transformation | 3     | [x]      |
-| C7 | Stages 4–9 each pass acceptance                | 4–9   | stages 4–6 ✅ / 7–9 [ ] |
+| C7 | Stages 4–9 each pass acceptance                | 4–9   | stages 4–7 ✅ / 8–9 [ ] |
 | C8 | Synthesis verified, RESULTS recorded           | 9     | [ ]      |
 | C9 | Bonus stages (rasterizer + video export)       | 10,11 | [ ]      |
 
